@@ -2,6 +2,7 @@
 #include <SoftwareSerial.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_GFX.h>
+#include <SaIoTDeviceLib.h>
 
 #define OLED_RESET 0
 #define SSRX D5
@@ -32,8 +33,30 @@ void printHMS();
 void printDate();
 void printDistanceToNPITI();
 static void smartDelay(unsigned long ms);
+unsigned long distanceToNPITI;
+
+//saiot lib
+WiFiClient espClient;
+SaIoTDeviceLib barril("Barril","060519LABB","ricardo@email.com");
+SaIoTSensor lat("lat","Latitude","Graus","number"); 
+SaIoTSensor lon("lon","Longitude","Graus","number"); 
+SaIoTSensor distancia("dist","Distancia Npiti","m","number"); 
+SaIoTSensor nSatelites("satelites","Satelites","qnt","number"); 
+String senha = "12345678910";
+void callback(char* topic, byte* payload, unsigned int length);
+void sendData2Saiot();
 
 void setup() {
+
+  barril.addSensor(lat);
+  barril.addSensor(lon);
+  barril.addSensor(distancia);
+  barril.addSensor(nSatelites);
+  Serial.begin(115200);
+  Serial.println("INICIO");
+  
+  barril.preSetCom(espClient, callback);
+  barril.start(senha);
 
   ss.begin(GPS_BAUD);
   oled.begin();
@@ -43,9 +66,19 @@ void setup() {
 
 void loop() {
 
+  smartDelay(1000);
   feed();
   updateDisplay();
-  smartDelay(1000);
+  sendData2Saiot();
+  barril.handleLoop();
+}
+
+void sendData2Saiot(){
+  String dateTime = SaIoTCom::getDateNow();
+  lat.sendData((latitude),dateTime);
+  lon.sendData((longitude),dateTime);
+  nSatelites.sendData((sats),dateTime);
+  distancia.sendData((distanceToNPITI),dateTime);
 }
 
 void feed()
@@ -136,7 +169,7 @@ void printDate()
 void printDistanceToNPITI()
 {
   if (!gps.location.isValid()) return;
-  unsigned long distanceToNPITI =
+  distanceToNPITI =
     (unsigned long)TinyGPSPlus::distanceBetween(
       gps.location.lat(),
       gps.location.lng(),
@@ -154,4 +187,20 @@ static void smartDelay(unsigned long ms)
     while (ss.available())
       gps.encode(ss.read());
   } while (millis() - start < ms);
+}
+
+void callback(char* topic, byte* payload, unsigned int length){
+  String payloadS;
+  Serial.print("Topic: ");
+  Serial.println(topic);
+  for (unsigned int i=0;i<length;i++) {
+    payloadS += (char)payload[i];
+  }
+  if(strcmp(topic,barril.getSerial().c_str()) == 0){
+    Serial.println("SerialLog: " + payloadS);
+  }
+  // if(strcmp(topic,(barril.getSerial()+solenoide.getKey()).c_str()) == 0){
+  //   Serial.println("SerialLog: " + payloadS);
+  //   //
+  // } utilizar para fila -> Se inscrever na propia key pra saber ser foi realmente enviado
 }
