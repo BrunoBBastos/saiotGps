@@ -1,8 +1,14 @@
-#include <TinyGPS++.h>
-#include <SoftwareSerial.h>
-#include <Adafruit_SSD1306.h>
-#include <Adafruit_GFX.h>
-#include <SaIoTDeviceLib.h>
+
+// utilizar para fila -> Se inscrever na propia key pra saber ser foi realmente enviado (Dica Ricardo)
+
+#include <Arduino.h>
+#include <TinyGPS++.h>                // Codificação da info do GPS
+#include <SoftwareSerial.h>           // Leitura do módulo GPS pela serial
+#include <Adafruit_SSD1306.h>         // Monitor OLED
+#include <Adafruit_GFX.h>             // Monitor OLED
+#include <SaIoTDeviceLib.h>           // Comunicação entre dispositivos e sistema SAIOT
+#include <QueueList.h>                // Gerenciamento de filas FIFO
+#include <Ticker.h>                   // Interrupções internas
 
 #define OLED_RESET 0
 #define SSRX D5
@@ -14,16 +20,33 @@
 #define FST_COL 0
 #define SCD_COL 64
 
-Adafruit_SSD1306 oled(OLED_RESET);
+class data{                       // Dados coletados a serem postos em fila
+  public: 
+  float value;                    // Valor
+  unsigned long instant;          // Momento da coleta
+};
 
+
+// GLOBAIS
 int sats = 0, dayMonthYear;
 float latitude = 0, longitude = 0;
-double nPITI_lat = -5.842586, nPITI_lon = -35.197695;
+double nPITI_lat = -5.842586, nPITI_lon = -35.197695;   // Posição do lab p calc de dist
+unsigned long distanceToNPITI;
+String senha = "12345678910";
 
-TinyGPSPlus gps;
-//TinyGPSCustom satsInView(gps, "GPGSV", 3);
-SoftwareSerial ss(SSRX, SSTX);
+// OBJETOS
+TinyGPSPlus gps;                            // GPS
+SoftwareSerial ss(SSRX, SSTX);              // Serial de software
+Adafruit_SSD1306 oled(OLED_RESET);          // Monitor OLED
+WiFiClient espClient;                       // Cliente WiFi
+SaIoTDeviceLib barril("Barril","060519LABB","ricardo@email.com");   // Dispositivo(nome, serial, email)
+SaIoTSensor lat("lat","Latitude","Graus","number");                 // Sensor(key, tag, unidade, tipo)
+SaIoTSensor lon("lon","Longitude","Graus","number"); 
+SaIoTSensor distancia("dist","Distancia Npiti","m","number"); 
+SaIoTSensor nSatelites("satelites","Satelites","qnt","number"); 
+QueueList<data> ValueQ;                                             // Fila de dados
 
+// DECLARAÇÃO DE FUNÇÕES
 void feed();
 void updateDisplay();
 void printPosition();
@@ -33,32 +56,24 @@ void printHMS();
 void printDate();
 void printDistanceToNPITI();
 static void smartDelay(unsigned long ms);
-unsigned long distanceToNPITI;
-
-//saiot lib
-WiFiClient espClient;
-SaIoTDeviceLib barril("Barril","060519LABB","ricardo@email.com");
-SaIoTSensor lat("lat","Latitude","Graus","number"); 
-SaIoTSensor lon("lon","Longitude","Graus","number"); 
-SaIoTSensor distancia("dist","Distancia Npiti","m","number"); 
-SaIoTSensor nSatelites("satelites","Satelites","qnt","number"); 
-String senha = "12345678910";
 void callback(char* topic, byte* payload, unsigned int length);
 void sendData2Saiot();
 
 void setup() {
 
-  barril.addSensor(lat);
+  barril.addSensor(lat);         // inicialização de sensores do dispositivo
   barril.addSensor(lon);
   barril.addSensor(distancia);
   barril.addSensor(nSatelites);
+
   Serial.begin(115200);
   Serial.println("INICIO");
-  
-  barril.preSetCom(espClient, callback);
-  barril.start(senha);
-
   ss.begin(GPS_BAUD);
+
+  barril.preSetCom(espClient, callback);    // Função padrão obrigatória (?)
+  barril.start(senha);                      // Inicialização da com. entre dispositivo e sistema SAIOT
+
+  
   oled.begin();
   oled.clearDisplay();
 
@@ -73,7 +88,7 @@ void loop() {
   barril.handleLoop();
 }
 
-void sendData2Saiot(){
+void sendData2Saiot(){                        // Enviar dados
   String dateTime = SaIoTCom::getDateNow();
   lat.sendData((latitude),dateTime);
   lon.sendData((longitude),dateTime);
@@ -81,7 +96,7 @@ void sendData2Saiot(){
   distancia.sendData((distanceToNPITI),dateTime);
 }
 
-void feed()
+void feed()                                   // Extrair info do sensor GPS
 {
   sats = gps.satellites.value();
   latitude = gps.location.lat();
@@ -98,20 +113,14 @@ void updateDisplay()
   oled.setTextColor(WHITE);
 
  printPosition();
-
-printSats();
-
+  printSats();
   printDate();
-
   printHMS();
-
   printDistanceToNPITI();
-
   oled.display();
-
 }
 
-void printPosition()
+void printPosition()                          //
 {
   if(!gps.location.isValid()){
     oled.setCursor(FST_COL, POS_LINE);
@@ -179,7 +188,7 @@ void printDistanceToNPITI()
   oled.print(distanceToNPITI);
 }
 
-static void smartDelay(unsigned long ms)
+static void smartDelay(unsigned long ms)      // Por 1 segundo, codifica mensagens do GPS
 {
   unsigned long start = millis();
   do
@@ -189,7 +198,7 @@ static void smartDelay(unsigned long ms)
   } while (millis() - start < ms);
 }
 
-void callback(char* topic, byte* payload, unsigned int length){
+void callback(char* topic, byte* payload, unsigned int length){    // Função padrão obrigatória (?)
   String payloadS;
   Serial.print("Topic: ");
   Serial.println(topic);
@@ -202,5 +211,14 @@ void callback(char* topic, byte* payload, unsigned int length){
   // if(strcmp(topic,(barril.getSerial()+solenoide.getKey()).c_str()) == 0){
   //   Serial.println("SerialLog: " + payloadS);
   //   //
-  // } utilizar para fila -> Se inscrever na propia key pra saber ser foi realmente enviado
+  // } 
+}
+
+void FuncPush()
+{
+  dados d;
+  d.valor = cont;
+  d.time = millis() / 1000;
+  filaPulsos.push(d);
+  cont = 0;
 }
